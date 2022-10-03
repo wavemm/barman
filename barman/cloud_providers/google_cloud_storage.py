@@ -32,6 +32,7 @@ except ImportError:
 try:
     from google.cloud import storage
     from google.api_core.exceptions import GoogleAPIError, Conflict
+    from google.api_core.retry import Retry
 except ImportError:
     raise SystemExit("Missing required python module: google-cloud-storage")
 
@@ -71,6 +72,10 @@ class GoogleCloudInterface(CloudInterface):
           uploaded objects
         """
         self.bucket_name, self.path = self._parse_url(url)
+        self.file_upload_retry_delay = int(os.getenv("GCS_FILE_UPLOAD_RETRY_DELAY", 10))
+        self.file_upload_retry_deadline = int(os.getenv("GCS_FILE_UPLOAD_RETRY_DEADLINE", 120))
+        self.file_upload_retry_delay_multiplier = float(os.getenv("GCS_FILE_UPLOAD_RETRY_DELAY_MULTPLIER", 2))
+        self.file_upload_timeout = int(os.getenv("GCS_FILE_UPLOAD_TIMEOUT", 120))
         super(GoogleCloudInterface, self).__init__(
             url=url,
             jobs=jobs,
@@ -223,7 +228,17 @@ class GoogleCloudInterface(CloudInterface):
             blob.metadata = dict(tags)
         logging.debug("blob initiated")
         try:
-            blob.upload_from_file(fileobj)
+            kwargs = {"file_obj":fileobj}
+            if self.file_upload_retry_deadline > 0:
+                kwargs["retry"] = Retry(
+                    predicate=lambda: True,
+                    deadline=self.file_upload_retry_deadline,
+                    delay=self.file_upload_retry_delay,
+                    multiplier=self.file_upload_retry_delay_multiplier,
+                )
+            if self.file_upload_timeout > 0:
+                kwargs["timeout"] = self.file_upload_timeout
+            blob.upload_from_file(**kwargs)
         except GoogleAPIError as e:
             logging.error(type(e))
             logging.error(e)
@@ -235,7 +250,8 @@ class GoogleCloudInterface(CloudInterface):
         https://cloud.google.com/storage/docs/uploads-downloads#uploads
         Closest solution is Parallel composite uploads. It is implemented in gsutil.
         It basically behave as follow:
-            * file to upload is split in chunks
+            * file                                                                                       |  111     # allow the default max_concurrency of 8 to be achieved when uploading
+  226     ¦   ¦   blob.upload_from_file(fileobj, timeout=120, num_re to upload is split in chunks
             * each chunk is sent to a specific path
             * when all chunks ar uploaded, compose call will assemble them into one file
             * chunk files can then be deleted
