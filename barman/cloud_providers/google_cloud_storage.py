@@ -233,7 +233,7 @@ class GoogleCloudInterface(CloudInterface):
                 kwargs["retry"] = Retry(
                     predicate=lambda: True,
                     deadline=self.file_upload_retry_deadline,
-                    delay=self.file_upload_retry_delay,
+                    initial=self.file_upload_retry_delay,
                     multiplier=self.file_upload_retry_delay_multiplier,
                 )
             if self.file_upload_timeout > 0:
